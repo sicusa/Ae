@@ -1,0 +1,14 @@
+{
+    "Lua.workspace.library": [
+        "C:/Users/50322/.luarocks",
+        "C:/Users/50322/AppData/Roaming/Code/User/globalStorage/sumneko.lua/addonManager/addons/love2d/module/library",
+        "./third-party"
+    ],
+    "Lua.runtime.special": {
+        "love.filesystem.load": "loadfile"
+    },
+    "Lua.workspace.checkThirdParty": false,
+    "Lua.diagnostics.disable": [
+        "duplicate-set-field"
+    ]
+}

@@ -1,0 +1,1 @@
+return require("love-debug-graph.debugGraph")

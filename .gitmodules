@@ -1,0 +1,36 @@
+[submodule "third-party/tiled"]
+	path = third-party/tiled
+	url = https://github.com/karai17/Simple-Tiled-Implementation
+[submodule "third-party/moonshine"]
+	path = third-party/moonshine
+	url = https://github.com/vrld/moonshine
+[submodule "third-party/sia"]
+	path = third-party/sia
+	url = git@github.com:sicusa/Sia.git
+[submodule "third-party/love-ase"]
+	path = third-party/love-ase
+	url = https://github.com/elloramir/love-ase
+[submodule "third-party/love-console"]
+	path = third-party/love-console
+	url = https://github.com/rameshvarun/love-console
+[submodule "third-party/love-debug-graph"]
+	path = third-party/love-debug-graph
+	url = https://github.com/Mechazawa/Love-Debug-Graph
+[submodule "third-party/lurker"]
+	path = third-party/lurker
+	url = https://github.com/rxi/lurker
+[submodule "third-party/lume"]
+	path = third-party/lume
+	url = https://github.com/rxi/lume
+[submodule "third-party/applecake"]
+	path = third-party/applecake
+	url = https://github.com/EngineerSmith/AppleCake
+[submodule "third-party/binser"]
+	path = third-party/binser
+	url = https://github.com/bakpakin/binser
+[submodule "third-party/dyana"]
+	path = third-party/dyana
+	url = git@github.com:sicusa/Dyana.git
+[submodule "third-party/cpml"]
+	path = third-party/cpml
+	url = https://github.com/excessive/cpml
