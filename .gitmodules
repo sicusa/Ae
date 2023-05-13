@@ -4,9 +4,6 @@
 [submodule "third-party/moonshine"]
 	path = third-party/moonshine
 	url = https://github.com/vrld/moonshine
-[submodule "third-party/sia"]
-	path = third-party/sia
-	url = git@github.com:sicusa/Sia.git
 [submodule "third-party/love-ase"]
 	path = third-party/love-ase
 	url = https://github.com/elloramir/love-ase
@@ -30,7 +27,10 @@
 	url = https://github.com/bakpakin/binser
 [submodule "third-party/dyana"]
 	path = third-party/dyana
-	url = git@github.com:sicusa/Dyana.git
+	url = https://github.com/sicusa/Dyana
 [submodule "third-party/cpml"]
 	path = third-party/cpml
 	url = https://github.com/excessive/cpml
+[submodule "third-party/sia"]
+	path = third-party/sia
+	url = https://github.com/sicusa/Sia
