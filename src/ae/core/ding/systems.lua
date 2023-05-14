@@ -65,7 +65,6 @@ return system {
     name = "ae.ding.systems",
     authors = {"Phlamcenth Sicusa <sicusa@gilatod.art>"},
     description = "Ding systems",
-
     version = {0, 0, 1},
     children = {
         name_library_initialize_system,

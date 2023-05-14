@@ -99,22 +99,31 @@ end)
 
 ---@class ae.welt.space: sia.component
 ---@field grid_scale number
+---@field objects table<sia.entity, boolean>
 ---@field [number] table<number, sia.entity?>
----@overload fun(config: ae.welt.space.config): ae.welt.space
+---@overload fun(config?: ae.welt.space.config): ae.welt.space
 components.space = entity.component(function(config)
     return {
-        grid_scale = config.grid_scale or 1
+        grid_scale = config.grid_scale or 1,
+        objects = {}
     }
 end)
 
----@param position ae.welt.vec2
+---@param e sia.entity
+---@return boolean
+function components.space:has_object(e)
+    return self.objects[e]
+end
+
+---@param x integer
+---@param y integer
 ---@return sia.entity?
-function components.space:get_object_in_grid(position)
-    local column = self[position.x]
+function components.space:get_object_in_grid(x, y)
+    local column = self[x]
     if column == nil then
         return nil
     end
-    local row = column[position.y]
+    local row = column[y]
     if row == nil then
         return nil
     end
@@ -125,16 +134,17 @@ local empty_iter = function()
     return nil
 end
 
----@param position ae.welt.vec2
+---@param x integer
+---@param y integer
 ---@return fun(table: sia.entity[], i?: integer): integer, sia.entity
 ---@return sia.entity[]?
 ---@return number?
-function components.space:iter_objects_in_grid(position)
-    local column = self[position.x]
+function components.space:iter_objects_in_grid(x, y)
+    local column = self[x]
     if column == nil then
         return empty_iter, nil, nil
     end
-    local row = column[position.y]
+    local row = column[y]
     if row == nil then
         return empty_iter, nil, nil
     end
@@ -142,11 +152,11 @@ function components.space:iter_objects_in_grid(position)
 end
 
 ---@class ae.welt.in_space: sia.component
----@field space ae.welt.space
+---@field entity sia.entity
 ---@overload fun(world: ae.welt.space): ae.welt.in_space
-components.in_space = entity.component(function(space)
+components.in_space = entity.component(function(entity)
     return {
-        space = space
+        entity = entity
     }
 end)
 

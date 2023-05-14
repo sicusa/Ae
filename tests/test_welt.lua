@@ -13,6 +13,10 @@ ae_world.scheduler = ae_sched
 
 welt.systems:register(ae_world, ae_sched);
 
+-- transform
+
+print("== transform ==")
+
 ae_world:add(entity {
     welt.constraint_library {}
 })
@@ -43,3 +47,30 @@ ae_sched:tick();
 ae_world:modify(e1, welt.position.set, {x = 2, y = 2})
 ae_sched:tick();
 print(vec2.unpack(e2[welt.position]))
+
+-- space
+
+print("== space ==")
+
+local space = welt.space {}
+local space_e = entity {
+    space
+}
+
+local e1 = entity {
+    welt.in_space(space_e),
+    welt.position(3, 13)
+}
+
+ae_world:add(e1)
+ae_sched:tick()
+
+print(e1)
+print(space:get_object_in_grid(3, 13))
+
+ae_world:modify(e1, welt.position.set, vec2.new(7, 149))
+ae_sched:tick()
+
+print("moved")
+print(space:get_object_in_grid(3, 13))
+print(space:get_object_in_grid(7, 149))

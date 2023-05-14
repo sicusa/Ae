@@ -177,16 +177,35 @@ local constraint_initialize_system = system {
         world.dispatcher:listen_on(target, state.target_remove_handler)
         constraints[#constraints + 1] = c
 
-        local position_offset = c.position_offset
-        local rotation_offset = c.rotation_offset
-        local scale_offset = c.scale_offset
-
-        if position_offset == nil then
-            world:modify(target, position.set, )
-        else
-            world:modify(target, position.set, vec2.add(value, offset))
+        local source_p = source[position]
+        if source_p ~= nil then
+            local position_offset = c.position_offset
+            if position_offset == nil then
+                world:modify(target, position.set, source_p)
+            else
+                world:modify(target, position.set, vec2.add(source_p, position_offset))
+            end
         end
 
+        local source_r = source[rotation]
+        if source_r ~= nil then
+            local rotation_offset = c.rotation_offset
+            if rotation_offset == nil then
+                world:modify(c.target, rotation.set, source_r)
+            else
+                world:modify(c.target, rotation.set, source_r + rotation_offset)
+            end
+        end
+
+        local source_s = source[scale]
+        if source_s ~= nil then
+            local scale_offset = c.scale_offset
+            if scale_offset == nil then
+                world:modify(c.target, scale.set, source_s)
+            else
+                world:modify(c.target, scale.set, source_s * scale_offset)
+            end
+        end
     end
 }
 
@@ -221,10 +240,6 @@ local constraint_uninitialize_system = system {
 
 local transform_systems = system {
     name = "ae.welt.transform_systems",
-    authors = {"Phlamcenth Sicusa <sicusa@gilatod.art>"},
-    description = "Transform systems",
-    version = {0, 0, 1},
-
     children = {
         constraint_library_initialize_system,
         constraint_library_uninitialize_system,
@@ -235,100 +250,135 @@ local transform_systems = system {
 
 -- space
 
+local space = components.space
 local in_space = components.in_space
 local obstacle = components.obstacle
 
-local function add_object_in_space_grid(space, obj, pos)
-    local scale = space.grid_scale
-    local column = space[floor(pos.x / scale)]
+local function add_object_in_space_grid(space, obj, grid_x, grid_y)
+    local column = space[grid_x]
     if column == nil then
         column = {}
-        space[pos.x] = column
+        space[grid_x] = column
     end
-    local row = column[floor(pos.y / scale)]
-    if row == nil then
-        row = {obj}
-        space[pos.y] = row
+    local grid = column[grid_y]
+    if grid == nil then
+        grid = {obj}
+        column[grid_y] = grid
     else
-        row[#row+1] = obj
+        grid[#grid+1] = obj
     end
 end
 
-local function remove_object_in_space_grid(space, obj, pos)
-    local scale = space.grid_scale
-    local column = space[floor(pos.x / scale)]
+local function remove_object_in_space_grid(space, obj, grid_x, grid_y)
+    local column = space[grid_x]
     if column == nil then
         return
     end
-    local row = column[floor(pos.y / scale)]
-    if row == nil then
+    local grid = column[grid_y]
+    if grid == nil then
         return
     end
-    return remove(row, obj)
+    if not remove(grid, obj) then
+        return
+    end
+
+    if #grid == 0 then
+        column[grid_y] = nil
+        if next(column) == nil then
+            space[grid_x] = nil
+        end
+    end
+    return true
 end
 
-local in_space_state = entity.component(function(last_position)
-    return {last_position}
+local function check_grid_occupied(space, grid_x, grid_y)
+    for obj in space:iter_objects_in_grid(grid_x, grid_y) do
+        if obj[obstacle] ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+local in_space_state = entity.component(function(last_position, last_grid)
+    return {
+        last_position = last_position,
+        last_grid = last_grid
+    }
 end)
 
-local in_space_object_initialize_system = system {
+local in_space_object_place_system = system {
     select = {in_space, position},
-    trigger = {"add"},
+    trigger = {"add", position.set},
 
     execute = function(world, sched, e)
         local p = e[position]
-        local s = e[in_space].space
+        local s = e[in_space].entity[space]
+        local state = e[in_space_state]
 
-        for obj in s:get_object_in_grid(p) do
-            if obj[obstacle] ~= nil then
-                print("error: object to be placed in the space has been occupied by an obstacle")
+        local scale = s.grid_scale
+        local grid_x = floor(p.x / scale)
+        local grid_y = floor(p.y / scale)
+
+        if state == nil then
+            if s == nil then
+                print("error: invalid space")
+                world:remove(e)
+                return
+            elseif check_grid_occupied(s, grid_x, grid_y) then
+                print("error: cannot create object in a space grid occupied by obstacle")
                 world:remove(e)
                 return
             end
+            world:add(s)
+            s.objects[e] = true
+            e:add_state(in_space_state(position(p.x, p.y), position(grid_x, grid_y)))
+        else
+            local last_pos = state.last_position
+            last_pos.x = p.x
+            last_pos.y = p.y
+
+            local last_grid = state.last_grid
+            if last_grid.x == grid_x and last_grid.y == grid_y then
+                return
+            elseif check_grid_occupied(s, grid_x, grid_y) then
+                world:modify(e, position.set, state.last_position)
+                return
+            end
+
+            remove_object_in_space_grid(s, e, last_grid.x, last_grid.y)
+            last_grid.x = grid_x
+            last_grid.y = grid_y
         end
 
-        add_object_in_space_grid(s, e, p)
-        e:add_state(in_space_state(p))
-    end
-}
-
-local in_space_object_move_system = system {
-    select = {in_space, position},
-    trigger = {position.set},
-
-    execute = function(world, sched, e)
-        local p = e[position]
-        local s = e[in_space].space
+        add_object_in_space_grid(s, e, grid_x, grid_y)
     end
 }
 
 local in_space_object_uninitialize_system = system {
     select = {in_space, position},
     trigger = {"remove"},
-    depend = {in_space_object_initialize_system},
+    depend = {in_space_object_place_system},
 
     execute = function(world, sched, e)
         local state = e[in_space_state]
         if state == nil then return end
 
-        local s = e[in_space].space
-        local p = state[1]
+        local s = e[in_space].entity[space]
+        local p = state.last_position
 
-        if not remove_object_in_space_grid(s, e, p) then
-            print("internal error: object not found")
+        s.objects[e] = nil
+        if not remove_object_in_space_grid(s, e, p.x, p.y) then
+            print("internal error: failed to remove object from space grid")
         end
     end
 }
 
 local space_systems = system {
     name = "ae.welt.space_systems",
-    authors = {"Phlamcenth Sicusa <sicusa@gilatod.art>"},
-    description = "Space systems",
-    version = {0, 0, 1},
-
     depend = {transform_systems},
     children = {
-        in_space_object_initialize_system,
+        in_space_object_place_system,
         in_space_object_uninitialize_system
     }
 }
@@ -338,7 +388,6 @@ return system {
     authors = {"Phlamcenth Sicusa <sicusa@gilatod.art>"},
     description = "Welt systems",
     version = {0, 0, 1},
-
     children = {
         transform_systems,
         space_systems
