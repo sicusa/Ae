@@ -99,7 +99,7 @@ end)
 
 ---@class ae.welt.space: sia.component
 ---@field grid_scale number
----@field objects table<sia.entity, boolean>
+---@field objects table<sia.entity, ae.welt.vec2?>
 ---@field [number] table<number, sia.entity?>
 ---@overload fun(config?: ae.welt.space.config): ae.welt.space
 components.space = entity.component(function(config)
@@ -112,7 +112,7 @@ end)
 ---@param e sia.entity
 ---@return boolean
 function components.space:has_object(e)
-    return self.objects[e]
+    return self.objects[e] ~= nil
 end
 
 ---@param x integer
@@ -123,11 +123,11 @@ function components.space:get_object_in_grid(x, y)
     if column == nil then
         return nil
     end
-    local row = column[y]
-    if row == nil then
+    local grid = column[y]
+    if grid == nil then
         return nil
     end
-    return row[1]
+    return grid[1]
 end
 
 local empty_iter = function()
@@ -144,11 +144,22 @@ function components.space:iter_objects_in_grid(x, y)
     if column == nil then
         return empty_iter, nil, nil
     end
-    local row = column[y]
-    if row == nil then
+    local grid = column[y]
+    if grid == nil then
         return empty_iter, nil, nil
     end
-    return ipairs(row)
+    return ipairs(grid)
+end
+
+---@param e sia.entity
+---@return integer
+---@return integer
+function components.space:get_object_grid_point(e)
+    local grid_pos = self.objects[e]
+    if grid_pos == nil then
+        error("object not found in space")
+    end
+    return grid_pos.x, grid_pos.y
 end
 
 ---@class ae.welt.in_space: sia.component

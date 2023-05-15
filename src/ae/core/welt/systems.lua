@@ -121,6 +121,41 @@ local constraint_state = entity.component(function(config)
     }
 end)
 
+local function apply_constraint(world, c)
+    local source = c.source
+    local target = c.target
+
+    local source_p = source[position]
+    if source_p ~= nil then
+        local position_offset = c.position_offset
+        if position_offset == nil then
+            world:modify(target, position.set, source_p)
+        else
+            world:modify(target, position.set, vec2.add(source_p, position_offset))
+        end
+    end
+
+    local source_r = source[rotation]
+    if source_r ~= nil then
+        local rotation_offset = c.rotation_offset
+        if rotation_offset == nil then
+            world:modify(target, rotation.set, source_r)
+        else
+            world:modify(target, rotation.set, source_r + rotation_offset)
+        end
+    end
+
+    local source_s = source[scale]
+    if source_s ~= nil then
+        local scale_offset = c.scale_offset
+        if scale_offset == nil then
+            world:modify(target, scale.set, source_s)
+        else
+            world:modify(target, scale.set, source_s * scale_offset)
+        end
+    end
+end
+
 local constraint_initialize_system = system {
     select = {constraint},
     trigger = {"add"},
@@ -131,8 +166,6 @@ local constraint_initialize_system = system {
 
     execute = function(world, sched, e)
         local lib = world[constraint_library]
-        if lib == nil then return end
-
         local c = e[constraint]
         c._entity = e
 
@@ -175,37 +208,24 @@ local constraint_initialize_system = system {
 
         e:add_state(state)
         world.dispatcher:listen_on(target, state.target_remove_handler)
+
         constraints[#constraints + 1] = c
+        apply_constraint(world, c)
+    end
+}
 
-        local source_p = source[position]
-        if source_p ~= nil then
-            local position_offset = c.position_offset
-            if position_offset == nil then
-                world:modify(target, position.set, source_p)
-            else
-                world:modify(target, position.set, vec2.add(source_p, position_offset))
-            end
-        end
+local constraint_update_system = system {
+    select = {constraint},
+    trigger = {
+        constraint.set_position_offset,
+        constraint.set_rotation_offset,
+        constraint.set_scale_offset
+    },
+    depend = {constraint_initialize_system},
 
-        local source_r = source[rotation]
-        if source_r ~= nil then
-            local rotation_offset = c.rotation_offset
-            if rotation_offset == nil then
-                world:modify(c.target, rotation.set, source_r)
-            else
-                world:modify(c.target, rotation.set, source_r + rotation_offset)
-            end
-        end
-
-        local source_s = source[scale]
-        if source_s ~= nil then
-            local scale_offset = c.scale_offset
-            if scale_offset == nil then
-                world:modify(c.target, scale.set, source_s)
-            else
-                world:modify(c.target, scale.set, source_s * scale_offset)
-            end
-        end
+    execute = function(world, sched, e)
+        local c = e[constraint]
+        apply_constraint(world, c)
     end
 }
 
@@ -216,9 +236,8 @@ local constraint_uninitialize_system = system {
 
     execute = function(world, sched, e)
         local lib = world[constraint_library]
-        if lib == nil then return end
-
         local c = e[constraint]
+
         local source = c.source
         local target = c.target
 
@@ -244,6 +263,7 @@ local transform_systems = system {
         constraint_library_initialize_system,
         constraint_library_uninitialize_system,
         constraint_initialize_system,
+        constraint_update_system,
         constraint_uninitialize_system
     }
 }
@@ -292,7 +312,7 @@ local function remove_object_in_space_grid(space, obj, grid_x, grid_y)
 end
 
 local function check_grid_occupied(space, grid_x, grid_y)
-    for obj in space:iter_objects_in_grid(grid_x, grid_y) do
+    for _, obj in space:iter_objects_in_grid(grid_x, grid_y) do
         if obj[obstacle] ~= nil then
             return true
         end
@@ -331,20 +351,25 @@ local in_space_object_place_system = system {
                 return
             end
             world:add(s)
-            s.objects[e] = true
-            e:add_state(in_space_state(position(p.x, p.y), position(grid_x, grid_y)))
+
+            local grid_pos = position(grid_x, grid_y)
+            s.objects[e] = grid_pos
+            e:add_state(in_space_state(position(p.x, p.y), grid_pos))
         else
             local last_pos = state.last_position
-            last_pos.x = p.x
-            last_pos.y = p.y
-
             local last_grid = state.last_grid
+
             if last_grid.x == grid_x and last_grid.y == grid_y then
+                last_pos.x = p.x
+                last_pos.y = p.y
                 return
             elseif check_grid_occupied(s, grid_x, grid_y) then
-                world:modify(e, position.set, state.last_position)
+                world:modify(e, position.set, last_pos)
                 return
             end
+
+            last_pos.x = p.x
+            last_pos.y = p.y
 
             remove_object_in_space_grid(s, e, last_grid.x, last_grid.y)
             last_grid.x = grid_x
