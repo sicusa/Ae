@@ -1,42 +1,130 @@
+local ffi = require("ffi")
+
 local entity = require("sia.entity")
 local system = require("sia.system")
+local ffic = require("sia.ffic")
+
 local lume = require("lume")
 local vec2 = require("cpml.modules.vec2")
 
-local components = require("ae.core.welt.components")
+local singleton = require("ae.utils.singleton")
 
-local floor = math.floor
 local remove = lume.remove
 
--- transform
+---@alias ae.vec2 {x: number, y: number}
+---@alias ae.vec3 {x: number, y: number, z: number}
 
-local position = components.position
-local rotation = components.rotation
-local scale = components.scale
-local constraint = components.constraint
-local constraint_library = components.constraint_library
+---@class ae.transform
+local transform = {}
 
-local constraint_library_state = entity.component(function(config)
+-- components
+
+ffi.cdef[[
+    struct ae_transform_position {
+        float x, y;
+    };
+    struct ae_transform_rotation {
+        float value;
+    };
+    struct ae_transform_scale {
+        float value;
+    };
+]]
+
+---@class ae.transform.position: ffi.ctype*
+---@field x number
+---@field y number
+---@field set sia.command (v: vec2)
+---@overload fun(pos: ae.vec2): ae.transform.position
+transform.position = ffic.struct("ae_transform_position", {
+    set = function(self, v)
+        self.x = v.x
+        self.y = v.y
+    end
+})
+
+---@class ae.transform.rotation: ffi.ctype*
+---@field value number
+---@field set sia.command (v: number)
+---@overload fun(v: number): ae.transform.rotation
+transform.rotation = ffic.struct("ae_transform_rotation", {
+    set = function(self, v)
+        self.value = v
+    end
+})
+
+---@class ae.transform.scale: ffi.ctype*
+---@field value number
+---@field set fun(self: ae.transform.scale, v: number)
+---@overload fun(v: number): ae.transform.scale
+transform.scale = ffic.struct("ae_transform_scale", {
+    set = function(self, v)
+        self.value = v
+    end
+})
+
+---@class ae.transform.constraint.props
+---@field source sia.entity
+---@field target sia.entity
+---@field position_offset? ae.vec2
+---@field rotation_offset? number
+---@field scale_offset? number
+
+---@class ae.transform.constraint: sia.component, ae.transform.constraint.props
+---@field set_position_offset sia.command (v: vec2)
+---@field set_rotation_offset sia.command (v: number)
+---@field set_scale_offset sia.command (v: number)
+---@overload fun(props: ae.transform.constraint.props): ae.transform.constraint
+transform.constraint = entity.component(function(props)
     return {
-        position_handler = config.position_handler,
-        rotation_handler = config.rotation_handler,
-        scale_handler = config.scale_handler
+        source = props.source,
+        target = props.target,
+        position_offset = props.position_offset,
+        rotation_offset = props.rotation_offset,
+        scale_offset = props.scale_offset
+    }
+end)
+:on("set_position_offset", function(self, v)
+    self.position_offset = v
+end)
+:on("set_rotation_offset", function(self, v)
+    self.rotation_offset = v
+end)
+:on("set_scale_offset", function(self, v)
+    self.scale_offset = v
+end)
+
+---@class ae.transform.constraint_library: sia.component
+---@field [sia.entity] ae.transform.constraint[]
+---@overload fun(): ae.transform.constraint_library
+transform.constraint_library = entity.component(function()
+    return {}
+end)
+
+-- systems
+
+local position = transform.position
+local rotation = transform.rotation
+local scale = transform.scale
+local constraint = transform.constraint
+local constraint_library = transform.constraint_library
+
+local constraint_library_state = entity.component(function(props)
+    return {
+        position_handler = props.position_handler,
+        rotation_handler = props.rotation_handler,
+        scale_handler = props.scale_handler
     }
 end)
 
 local constraint_library_initialize_system = system {
+    name = "ae.transform.constraint_library_initialize_system",
     select = {constraint_library},
     trigger = {"add"},
 
     execute = function(world, sched, e)
-        local lib = e[constraint_library]
-
-        if world[constraint_library] == lib then
-            print("error: constraint library already exists")
-            world:remove(e)
-            return
-        end
-        world[constraint_library] = lib
+        local lib = singleton.register(world, e, constraint_library, "constraint library")
+        if lib == nil then return end
 
         local state = constraint_library_state {
             position_handler = function(_, source, value)
@@ -95,17 +183,14 @@ local constraint_library_initialize_system = system {
 }
 
 local constraint_library_uninitialize_system = system {
+    name = "ae.transform.constraint_library_uninitialize_system",
     select = {constraint_library},
     trigger = {"remove"},
     depend = {constraint_library_initialize_system},
 
     execute = function(world, sched, e)
-        local lib = e[constraint_library]
-
-        if world[constraint_library] ~= lib then
-            return
-        end
-        world[constraint_library] = nil
+        local lib = singleton.unregister(world, e, constraint_library)
+        if lib == nil then return end
 
         local state = e[constraint_library_state]
         local disp = world.dispatcher
@@ -115,9 +200,9 @@ local constraint_library_uninitialize_system = system {
     end
 }
 
-local constraint_state = entity.component(function(config)
+local constraint_state = entity.component(function(props)
     return {
-        target_remove_handler = config.target_remove_handler
+        target_remove_handler = props.target_remove_handler
     }
 end)
 
@@ -157,6 +242,7 @@ local function apply_constraint(world, c)
 end
 
 local constraint_initialize_system = system {
+    name = "ae.transform.constraint_initialize_system",
     select = {constraint},
     trigger = {"add"},
     depend = {
@@ -165,7 +251,9 @@ local constraint_initialize_system = system {
     },
 
     execute = function(world, sched, e)
-        local lib = world[constraint_library]
+        local lib = singleton.require(world, constraint_library, "constraint library")
+        if lib == nil then return end
+
         local c = e[constraint]
         c._entity = e
 
@@ -214,30 +302,17 @@ local constraint_initialize_system = system {
     end
 }
 
-local constraint_update_system = system {
-    select = {constraint},
-    trigger = {
-        constraint.set_position_offset,
-        constraint.set_rotation_offset,
-        constraint.set_scale_offset
-    },
-    depend = {constraint_initialize_system},
-
-    execute = function(world, sched, e)
-        local c = e[constraint]
-        apply_constraint(world, c)
-    end
-}
-
 local constraint_uninitialize_system = system {
+    name = "ae.transform.constraint_uninitialize_system",
     select = {constraint},
     trigger = {"remove"},
     depend = {constraint_initialize_system},
 
     execute = function(world, sched, e)
-        local lib = world[constraint_library]
-        local c = e[constraint]
+        local lib = singleton.require(world, constraint_library, "constraint library")
+        if lib == nil then return end
 
+        local c = e[constraint]
         local source = c.source
         local target = c.target
 
@@ -257,164 +332,33 @@ local constraint_uninitialize_system = system {
     end
 }
 
-local transform_systems = system {
-    name = "ae.welt.transform_systems",
+local constraint_update_system = system {
+    name = "ae.transform.constraint_update_system",
+    select = {constraint},
+    trigger = {
+        constraint.set_position_offset,
+        constraint.set_rotation_offset,
+        constraint.set_scale_offset
+    },
+    depend = {constraint_initialize_system},
+
+    execute = function(world, sched, e)
+        local c = e[constraint]
+        apply_constraint(world, c)
+    end
+}
+
+transform.systems = system {
+    name = "ae.transform.systems",
+    authors = {"Phlamcenth Sicusa <sicusa@gilatod.art>"},
+    version = {0, 0, 1},
     children = {
         constraint_library_initialize_system,
         constraint_library_uninitialize_system,
         constraint_initialize_system,
-        constraint_update_system,
-        constraint_uninitialize_system
+        constraint_uninitialize_system,
+        constraint_update_system
     }
 }
 
--- space
-
-local space = components.space
-local in_space = components.in_space
-local obstacle = components.obstacle
-
-local function add_object_in_space_grid(space, obj, grid_x, grid_y)
-    local column = space[grid_x]
-    if column == nil then
-        column = {}
-        space[grid_x] = column
-    end
-    local grid = column[grid_y]
-    if grid == nil then
-        grid = {obj}
-        column[grid_y] = grid
-    else
-        grid[#grid+1] = obj
-    end
-end
-
-local function remove_object_in_space_grid(space, obj, grid_x, grid_y)
-    local column = space[grid_x]
-    if column == nil then
-        return
-    end
-    local grid = column[grid_y]
-    if grid == nil then
-        return
-    end
-    if not remove(grid, obj) then
-        return
-    end
-
-    if #grid == 0 then
-        column[grid_y] = nil
-        if next(column) == nil then
-            space[grid_x] = nil
-        end
-    end
-    return true
-end
-
-local function check_grid_occupied(space, grid_x, grid_y)
-    for _, obj in space:iter_objects_in_grid(grid_x, grid_y) do
-        if obj[obstacle] ~= nil then
-            return true
-        end
-    end
-    return false
-end
-
-local in_space_state = entity.component(function(last_position, last_grid)
-    return {
-        last_position = last_position,
-        last_grid = last_grid
-    }
-end)
-
-local in_space_object_place_system = system {
-    select = {in_space, position},
-    trigger = {"add", position.set},
-
-    execute = function(world, sched, e)
-        local p = e[position]
-        local s = e[in_space].entity[space]
-        local state = e[in_space_state]
-
-        local scale = s.grid_scale
-        local grid_x = floor(p.x / scale)
-        local grid_y = floor(p.y / scale)
-
-        if state == nil then
-            if s == nil then
-                print("error: invalid space")
-                world:remove(e)
-                return
-            elseif check_grid_occupied(s, grid_x, grid_y) then
-                print("error: cannot create object in a space grid occupied by obstacle")
-                world:remove(e)
-                return
-            end
-            world:add(s)
-
-            local grid_pos = position(grid_x, grid_y)
-            s.objects[e] = grid_pos
-            e:add_state(in_space_state(position(p.x, p.y), grid_pos))
-        else
-            local last_pos = state.last_position
-            local last_grid = state.last_grid
-
-            if last_grid.x == grid_x and last_grid.y == grid_y then
-                last_pos.x = p.x
-                last_pos.y = p.y
-                return
-            elseif check_grid_occupied(s, grid_x, grid_y) then
-                world:modify(e, position.set, last_pos)
-                return
-            end
-
-            last_pos.x = p.x
-            last_pos.y = p.y
-
-            remove_object_in_space_grid(s, e, last_grid.x, last_grid.y)
-            last_grid.x = grid_x
-            last_grid.y = grid_y
-        end
-
-        add_object_in_space_grid(s, e, grid_x, grid_y)
-    end
-}
-
-local in_space_object_uninitialize_system = system {
-    select = {in_space, position},
-    trigger = {"remove"},
-    depend = {in_space_object_place_system},
-
-    execute = function(world, sched, e)
-        local state = e[in_space_state]
-        if state == nil then return end
-
-        local s = e[in_space].entity[space]
-        local p = state.last_position
-
-        s.objects[e] = nil
-        if not remove_object_in_space_grid(s, e, p.x, p.y) then
-            print("internal error: failed to remove object from space grid")
-        end
-    end
-}
-
-local space_systems = system {
-    name = "ae.welt.space_systems",
-    depend = {transform_systems},
-    children = {
-        in_space_object_place_system,
-        in_space_object_uninitialize_system
-    }
-}
-
-return system {
-    name = "ae.welt.systems",
-    authors = {"Phlamcenth Sicusa <sicusa@gilatod.art>"},
-    description = "Welt systems",
-    version = {0, 0, 1},
-    children = {
-        transform_systems,
-        space_systems
-    }
-}
+return transform

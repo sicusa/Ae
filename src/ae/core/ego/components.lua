@@ -3,16 +3,18 @@ local entity = require("sia.entity")
 ---@class ae.ego.components
 local components = {}
 
----@class ae.ego.noesis.config
+---@class ae.ego.noesis.props
 ---@field quality sia.entity
 ---@field matter sia.entity
 
----@class ae.ego.noesis: sia.component, ae.ego.noesis.config
----@overload fun(config: ae.ego.noesis.config)
-components.noesis = entity.component(function(config)
+---@class ae.ego.noesis: sia.component
+---@field quality sia.entity
+---@field matter sia.entity
+---@overload fun(props: ae.ego.noesis.props): ae.ego.noesis
+components.noesis = entity.component(function(props)
     return {
-        quality = config.quality,
-        matter = config.matter
+        quality = props.quality,
+        matter = props.matter
     }
 end)
 

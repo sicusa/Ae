@@ -2,61 +2,61 @@ local entity = require("sia.entity")
 local system = require("sia.system")
 
 local components = require("ae.core.ding.components")
-local name_library = components.name_library
-local name = components.name
+local key_library = components.key_library
+local key = components.key
 
-local name_library_initialize_system = system {
-    select = {name_library},
+local key_library_initialize_system = system {
+    select = {key_library},
     trigger = {"add"},
 
     execute = function(world, sched, e)
-        if world[name_library] ~= nil then
-            print("error: name library already exists")
+        if world[key_library] ~= nil then
+            print("error: key library already exists")
             return
         end
-        world[name_library] = e[name_library]
+        world[key_library] = e[key_library]
     end
 }
 
-local name_library_uninitiialize_system = system {
-    select = {name_library},
+local key_library_uninitiialize_system = system {
+    select = {key_library},
     trigger = {"remove"},
-    depend = {name_library_initialize_system},
+    depend = {key_library_initialize_system},
 
     execute = function(world, sched, e)
-        if world[name_library] ~= e[name_library] then
+        if world[key_library] ~= e[key_library] then
             return
         end
-        world[name_library] = nil
+        world[key_library] = nil
     end
 }
 
-local recorded_name_state = entity.component(function(value)
+local recorded_key_state = entity.component(function(value)
     return {value}
 end)
 
-local name_record_system = system {
-    select = {name},
-    trigger = {"add", name.set},
+local key_record_system = system {
+    select = {key},
+    trigger = {"add", key.set},
     depend = {
-        name_library_initialize_system,
-        name_library_uninitiialize_system
+        key_library_initialize_system,
+        key_library_uninitiialize_system
     },
 
     execute = function(world, sched, e)
-        local lib = world[name_library]
+        local lib = world[key_library]
         if lib == nil then return end
 
-        local name_value = e[name].value
-        local state = e[recorded_name_state]
+        local key_value = e[key].value
+        local state = e[recorded_key_state]
 
         if state == nil then
-            lib[name_value] = e
-            e:add_state(recorded_name_state(name_value))
+            lib[key_value] = e
+            e:add_state(recorded_key_state(key_value))
         else
             lib[state[1]] = nil
-            lib[name_value] = e
-            state[1] = name_value
+            lib[key_value] = e
+            state[1] = key_value
         end
     end
 }
@@ -67,8 +67,8 @@ return system {
     description = "Ding systems",
     version = {0, 0, 1},
     children = {
-        name_library_initialize_system,
-        name_library_uninitiialize_system,
-        name_record_system
+        key_library_initialize_system,
+        key_library_uninitiialize_system,
+        key_record_system
     }
 }
