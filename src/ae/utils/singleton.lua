@@ -8,7 +8,7 @@ local singleton = {}
 ---@param component_type T
 ---@param name string
 ---@return T?
-singleton.require = function(world, component_type, name)
+singleton.get = function(world, component_type, name)
     local instance = world[component_type]
     if instance == nil then
         print("error: "..name.." singleton not found")

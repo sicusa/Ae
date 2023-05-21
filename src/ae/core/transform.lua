@@ -251,7 +251,7 @@ local constraint_initialize_system = system {
     },
 
     execute = function(world, sched, e)
-        local lib = singleton.require(world, constraint_library, "constraint library")
+        local lib = singleton.get(world, constraint_library, "constraint library")
         if lib == nil then return end
 
         local c = e[constraint]
@@ -309,7 +309,7 @@ local constraint_uninitialize_system = system {
     depend = {constraint_initialize_system},
 
     execute = function(world, sched, e)
-        local lib = singleton.require(world, constraint_library, "constraint library")
+        local lib = singleton.get(world, constraint_library, "constraint library")
         if lib == nil then return end
 
         local c = e[constraint]
