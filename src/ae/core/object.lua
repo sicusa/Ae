@@ -8,18 +8,11 @@ local object = {}
 
 -- components
 
----@class ae.object.key_library: sia.component
----@field [any] table<sia.entity, true?>
----@overload fun(value: string): ae.object.key_library
-object.key_library = entity.component(function()
-    return {}
-end)
-
----@class ae.object.key: sia.component
----@field value any
----@field set sia.command (value: any)
----@overload fun(value: string): ae.object.key
-object.key = entity.component(function(value)
+---@class ae.object.name: sia.component
+---@field value string
+---@field set sia.command (value: string)
+---@overload fun(value: string): ae.object.name
+object.name = entity.component(function(value)
     return {
         value = value
     }
@@ -28,198 +21,220 @@ end)
     self.value = value
 end)
 
----@class ae.object.relation_kind
----@field parent? ae.object.relation_kind
----@overload fun(parent?: ae.object.relation_kind): ae.object.relation_kind
-local kind = {}
-object.kind = kind
-
-setmetatable(kind, {
-    __call = function(_, parent)
-        local instance = setmetatable({}, kind)
-        instance.parent = parent
-        return instance
-    end
-})
-
----@param other ae.object.relation_kind
----@return boolean
-function kind:is_sub_of(other)
-    local k = self
-    repeat
-        if k == other then
-            return true
-        end
-        k = k.parent
-    until k == nil
-    return false
-end
-
----@class ae.object.relation.props
----@field source sia.entity
----@field target sia.entity
----@field kind ae.object.relation_kind
-
----@class ae.object.relation: sia.component
----@field source sia.entity
----@field target sia.entity | sia.entity[]
----@field kind ae.object.relation_kind
----@field entity? sia.entity
----@overload fun(props: ae.object.relation.props): ae.object.relation
-object.relation = entity.component(function(props)
-    return {
-        source = props.source,
-        target = props.target,
-        kind = props.kind
-    }
+---@class ae.object.name_library: sia.component
+---@field [string] table<sia.entity, true?>
+---@field [sia.entity] string
+---@overload fun(value: string): ae.object.name_library
+object.name_library = entity.component(function()
+    return {}
 end)
 
----@class ae.object.relation_library: sia.component
----@field [ae.object.relation_kind] table<sia.entity, ae.object.relation?>
----@overload fun(): ae.object.relation_library
-object.relation_library = entity.component(function()
-    return {}
+---@alias ae.object.monitor_event fun(world: sia.world, sched: sia.scheduler, entity: sia.entity)
+
+---@class ae.object.monitor.props
+---@field target? sia.entity
+---@field add? ae.object.monitor_event
+---@field remove? ae.object.monitor_event
+---@field [sia.command] ae.object.monitor_event
+
+---@class ae.object.monitor: sia.component
+---@field target? sia.entity
+---@field add? ae.object.monitor_event
+---@field remove? ae.object.monitor_event
+---@field tick? ae.object.monitor_event
+---@field [sia.command] ae.object.monitor_event
+---@overload fun(props: ae.object.monitor.props): ae.object.monitor
+object.monitor = entity.component(function(props)
+    local data = {}
+    for k, v in pairs(props) do
+        data[k] = v
+    end
+    return data
+end)
+
+---@class ae.object.monitor_library: sia.component
+---@field tick_callbacks {[0]: ae.object.monitor, [1]: sia.entity}[]
+---@field [sia.entity] ae.object.monitor[]?
+---@overload fun(): ae.object.monitor_library
+object.monitor_library = entity.component(function()
+    return {
+        tick_callbacks = {}
+    }
 end)
 
 -- systems
 
-local key_library = object.key_library
-local key = object.key
-local relation_library = object.relation_library
-local relation = object.relation
+local name = object.name
+local name_library = object.name_library
+local monitor = object.monitor
+local monitor_library = object.monitor_library
 
-local key_library_initialize_system = system {
-    name = "ae.object.key_library_initialize_system",
-    select = {key_library},
-    trigger = {"add"},
+local name_record_system = system {
+    name = "ae.object.name_record_system",
+    select = {name},
+    trigger = {"add", name.set},
 
-    execute = function(world, sched, e)
-        singleton.register(world, e, key_library, "key library")
-    end
-}
+    before_execute = function(world, sched)
+        return singleton.acquire(world, name_library)
+    end,
 
-local key_library_uninitiialize_system = system {
-    name = "ae.object.key_library_uninitiialize_system",
-    select = {key_library},
-    trigger = {"remove"},
-    depend = {key_library_initialize_system},
+    execute = function(world, sched, e, lib)
+        print(lib)
+        local name_value = e[name].value
+        local prev_name = lib[e]
 
-    execute = function(world, sched, e)
-        singleton.unregister(world, e, key_library)
-    end
-}
-
-local recorded_key_state = entity.component(function(value)
-    return {value}
-end)
-
-local key_record_system = system {
-    name = "ae.object.key_record_system",
-    select = {key},
-    trigger = {"add", key.set},
-    depend = {
-        key_library_initialize_system,
-        key_library_uninitiialize_system
-    },
-
-    execute = function(world, sched, e)
-        local lib = singleton.get(world, key_library, "key library")
-        if lib == nil then return end
-
-        local key_value = e[key].value
-        local state = e[recorded_key_state]
-
-        if state == nil then
-            lib[key_value] = e
-            e:add_state(recorded_key_state(key_value))
-        else
-            lib[state[1]] = nil
-            lib[key_value] = e
-            state[1] = key_value
+        if prev_name ~= nil then
+            local prev_slot = lib[prev_name]
+            if prev_slot == nil then
+                print("error: corrupted previous name "..prev_name)
+            else
+                prev_slot[e] = nil
+            end
         end
+
+        local slot = lib[name_value]
+        if slot == nil then
+            slot = {}
+            lib[name_value] = slot
+        end
+
+        slot[e] = true
+        lib[e] = name_value
     end
 }
 
-local relation_library_initialize_system = system {
-    name = "ae.object.relation_library_initialize_system",
-    select = {relation_library},
-    trigger = {"add"},
-
-    execute = function(world, sched, e)
-        singleton.register(world, e, relation_library, "relation library")
-    end
-}
-
-local relation_library_uninitialize_system = system {
-    name = "ae.object.relation_library_uninitialize_system",
-    select = {relation_library},
+local name_unrecord_system = system {
+    name = "ae.object.name_unrecord_system",
+    select = {name},
     trigger = {"remove"},
-    depend = {relation_library_initialize_system},
+    depend = {name_record_system},
 
-    execute = function(world, sched, e)
-        singleton.unregister(world, e, relation_library)
-    end
-}
+    before_execute = function(world, sched)
+        return singleton.acquire(world, name_library)
+    end,
 
-local relation_initialize_system = system {
-    name = "ae.object.relation_initialize_system",
-    select = {relation},
-    trigger = {"add"},
-    depend = {
-        relation_library_initialize_system,
-        relation_library_uninitialize_system
-    },
-
-    execute = function(world, sched, e)
-        local lib = singleton.get(world, relation_library, "relation library")
-        if lib == nil then return end
-
-        local r = e[relation]
-        if r.entity ~= nil then
-            print("error: relation has been added to a world")
+    execute = function(worl, sched, e, lib)
+        local curr_name = lib[e]
+        if curr_name == nil then
+            print("error: corrupted name library")
             return
         end
-        r.entity = e
 
-        local source = r.source
-        local target = r.target
-        local kind = r.kind
+        lib[e] = nil
+        lib[curr_name][e] = nil
+    end
+}
 
-        world:add(source)
-        world:add(target)
+local monitor_register_system = system {
+    name = "ae.object.monitor_register_system",
+    select = {monitor},
+    trigger = {"add"},
 
-        while kind ~= nil do
-            local pairs = lib[kind]
-            if pairs == nil then
-                pairs = {}
-                lib[kind] = pairs
+    before_execute = function(world, sched)
+        return singleton.acquire(world, monitor_library)
+    end,
+
+    execute = function(world, sched, e, lib)
+        local m = e[monitor]
+        local target = m.target
+
+        if target ~= nil then
+            world:add(target)
+        else
+            target = e
+        end
+
+        local monitors = lib[target]
+
+        if monitors == nil then
+            monitors = {}
+            lib[target] = monitors
+
+            monitors.__listener = function(command, e)
+                for i = 1, #monitors do
+                    local callback = monitors[i][command]
+                    if callback then callback(world, sched, e) end
+                end
             end
-            local prev_relation = pairs[source]
-            if prev_relation ~= nil then
-                world:remove(prev_relation.entity)
-            end
-            pairs[source] = r
-            kind = kind.parent
+            world.dispatcher:listen_on(target, monitors.__listener)
+        end
+
+        local i = #monitors+1
+        monitors[i] = m
+        monitors[m] = i
+
+        local tick = m.tick
+        if tick ~= nil then
+            local tick_callbacks = lib.tick_callbacks
+            local tick_callback_i = #tick_callbacks+1
+            tick_callbacks[tick_callback_i] = {tick, target}
+            tick_callbacks[m] = tick_callback_i
         end
     end
 }
 
-local relation_uninitialize_system = system {
-    name = "ae.object.relation_uninitialize_system",
-    select = {relation},
+local monitor_unregister_system = system {
+    name = "ae.object.monitor_unregister_system",
+    select = {monitor},
     trigger = {"remove"},
-    depend = {relation_initialize_system},
+    depend = {monitor_register_system},
+
+    before_execute = function(world, sched)
+        return singleton.acquire(world, monitor_library)
+    end,
+
+    execute = function(world, sched, e, lib)
+        local m = e[monitor]
+        local target = m.target or e
+        local monitors = lib[target]
+
+        if monitors == nil then
+            return
+        end
+
+        local i = monitors[m]
+        if i == nil then
+            print("error: corrupted monitors")
+            return
+        end
+
+        local last_i = #monitors
+        monitors[m] = nil
+        monitors[i] = monitors[last_i]
+        monitors[last_i] = nil
+
+        if m.tick ~= nil then
+            local tick_callbacks = lib.tick_callbacks
+            local tick_callback_i = tick_callbacks[m]
+            local last_tick_callback_i = #tick_callbacks
+            tick_callbacks[m] = nil
+            tick_callbacks[tick_callback_i] = tick_callbacks[last_tick_callback_i]
+            tick_callbacks[last_tick_callback_i] = nil
+        end
+
+        if next(monitors) == nil then
+            world.dispatcher:unlisten_on(target, monitors.__listener)
+            lib[target] = nil
+        end
+    end
+}
+
+local monitor_tick_system = system {
+    name = "ae.object.monitor_tick_system",
+    select = {monitor_library},
+    depend = {
+        monitor_register_system,
+        monitor_unregister_system
+    },
 
     execute = function(world, sched, e)
-        local lib = singleton.get(world, relation_library, "relation library")
-        if lib == nil then return end
+        local lib = e[monitor_library]
+        local tick_callbacks = lib.tick_callbacks
 
-        local r = e[relation]
-        local source = r.source
-        local target = r.target
-        local kind = r.kind
-
-        
+        for i = 1, #tick_callbacks do
+            local entry = tick_callbacks[i]
+            entry[1](world, sched, entry[2])
+        end
     end
 }
 
@@ -228,12 +243,11 @@ object.systems = system {
     authors = {"Phlamcenth Sicusa <sicusa@gilatod.art>"},
     version = {0, 0, 1},
     children = {
-        key_library_initialize_system,
-        key_library_uninitiialize_system,
-        key_record_system,
-        relation_library_initialize_system,
-        relation_library_uninitialize_system,
-        relation_record_system
+        name_record_system,
+        name_unrecord_system,
+        monitor_register_system,
+        monitor_unregister_system,
+        monitor_tick_system
     }
 }
 

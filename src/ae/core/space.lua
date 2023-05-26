@@ -1,3 +1,5 @@
+local lume = require("lume")
+
 local entity = require("sia.entity")
 local system = require("sia.system")
 
@@ -15,23 +17,21 @@ local space = {}
 ---@class ae.space.map.props
 ---@field grid_scale? number
 
+---@class ae.space.object_data
+---@field grid ae.vec2
+---@field position ae.vec2
+
 ---@class ae.space.map: sia.component
 ---@field grid_scale number
----@field objects table<sia.entity, ae.vec2?>
+---@field objects table<sia.entity, ae.space.object_data?>
 ---@field [number] table<number, sia.entity?>
----@overload fun(props?: ae.space.map.props): ae.space
+---@overload fun(props?: ae.space.map.props): ae.space.map
 space.map = entity.component(function(props)
     return {
         grid_scale = props.grid_scale or 1,
         objects = {}
     }
 end)
-
----@param e sia.entity
----@return boolean
-function space.map:has_object(e)
-    return self.objects[e] ~= nil
-end
 
 ---@param x integer
 ---@param y integer
@@ -69,24 +69,11 @@ function space.map:iter_objects_in_grid(x, y)
     return ipairs(grid)
 end
 
----@param e sia.entity
----@return integer
----@return integer
-function space.map:get_object_grid_point(e)
-    local grid_pos = self.objects[e]
-    if grid_pos == nil then
-        error("object not found in space")
-    end
-    return grid_pos.x, grid_pos.y
-end
-
 ---@class ae.space.in_map: sia.component
----@field entity sia.entity
----@overload fun(world: ae.space): ae.space.in_map
-space.in_map = entity.component(function(entity)
-    return {
-        entity = entity
-    }
+---@field [number] sia.entity
+---@overload fun(...: sia.entity): ae.space.in_map
+space.in_map = entity.component(function(...)
+    return {...}
 end)
 
 ---@class ae.space.obstacle: sia.component
@@ -147,12 +134,71 @@ local function check_grid_occupied(map, grid_x, grid_y)
     return false
 end
 
-local in_map_state = entity.component(function(last_position, last_grid)
-    return {
-        last_position = last_position,
-        last_grid = last_grid
-    }
-end)
+local function update_object_in_map(world, map_entity, e, p)
+    local m = map_entity[map]
+    if m == nil then
+        print("error: invalid map")
+        return
+    end
+
+    local data = m.objects[e]
+    local scale = m.grid_scale
+    local grid_x = floor(p.x / scale)
+    local grid_y = floor(p.y / scale)
+
+    if data == nil then
+        if check_grid_occupied(m, grid_x, grid_y) then
+            print("error: cannot create object in a map grid occupied by obstacle")
+            return
+        end
+        world:add(map_entity)
+        m.objects[e] = {
+            grid = position(grid_x, grid_y),
+            position = position(p.x, p.y)
+        }
+    else
+        local last_pos = data.position
+        local last_grid = data.grid
+
+        if last_grid.x == grid_x and last_grid.y == grid_y then
+            last_pos.x = p.x
+            last_pos.y = p.y
+            return
+        elseif check_grid_occupied(m, grid_x, grid_y) then
+            world:modify(e, position.set, last_pos)
+            return
+        end
+
+        last_pos.x = p.x
+        last_pos.y = p.y
+
+        remove_object_in_map_grid(m, e, last_grid.x, last_grid.y)
+        last_grid.x = grid_x
+        last_grid.y = grid_y
+    end
+
+    add_object_in_map_grid(m, e, grid_x, grid_y)
+end
+
+local function remove_object_in_map(map_entity, e)
+    local m = map_entity[map]
+    if m == nil then
+        return
+    end
+
+    local objects = m.objects
+    local data = objects[e]
+    if data == nil then
+        return
+    end
+
+    local grid = data.grid
+    if not remove_object_in_map_grid(m, e, grid.x, grid.y) then
+        print("internal error: failed to remove object from map grid")
+    end
+
+    objects[e] = nil
+end
 
 local in_map_object_place_system = system {
     name = "ae.space.in_map_object_place_system",
@@ -161,50 +207,11 @@ local in_map_object_place_system = system {
 
     execute = function(world, sched, e)
         local p = e[position]
-        local s = e[in_map].entity[map]
-        local state = e[in_map_state]
+        local maps = e[in_map]
 
-        local scale = s.grid_scale
-        local grid_x = floor(p.x / scale)
-        local grid_y = floor(p.y / scale)
-
-        if state == nil then
-            if s == nil then
-                print("error: invalid map")
-                world:remove(e)
-                return
-            elseif check_grid_occupied(s, grid_x, grid_y) then
-                print("error: cannot create object in a map grid occupied by obstacle")
-                world:remove(e)
-                return
-            end
-            world:add(s)
-
-            local grid_pos = position(grid_x, grid_y)
-            s.objects[e] = grid_pos
-            e:add_state(in_map_state(position(p.x, p.y), grid_pos))
-        else
-            local last_pos = state.last_position
-            local last_grid = state.last_grid
-
-            if last_grid.x == grid_x and last_grid.y == grid_y then
-                last_pos.x = p.x
-                last_pos.y = p.y
-                return
-            elseif check_grid_occupied(s, grid_x, grid_y) then
-                world:modify(e, position.set, last_pos)
-                return
-            end
-
-            last_pos.x = p.x
-            last_pos.y = p.y
-
-            remove_object_in_map_grid(s, e, last_grid.x, last_grid.y)
-            last_grid.x = grid_x
-            last_grid.y = grid_y
+        for i = 1, #maps do
+            update_object_in_map(world, maps[i], e, p)
         end
-
-        add_object_in_map_grid(s, e, grid_x, grid_y)
     end
 }
 
@@ -215,15 +222,9 @@ local in_map_object_uninitialize_system = system {
     depend = {in_map_object_place_system},
 
     execute = function(world, sched, e)
-        local state = e[in_map_state]
-        if state == nil then return end
-
-        local s = e[in_map].entity[map]
-        local p = state.last_position
-
-        s.objects[e] = nil
-        if not remove_object_in_map_grid(s, e, p.x, p.y) then
-            print("internal error: failed to remove object from map grid")
+        local maps = e[in_map]
+        for i = 1, #maps do
+            remove_object_in_map(maps[i], e)
         end
     end
 }

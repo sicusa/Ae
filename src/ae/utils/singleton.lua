@@ -19,31 +19,32 @@ end
 
 ---@generic T: sia.component
 ---@param world sia.world
----@param entity sia.entity
 ---@param component_type T
----@param name string
----@return T?
-singleton.register = function(world, entity, component_type, name)
-    if world[component_type] ~= nil then
-        print("error: "..name.." singleton already exists")
-        return nil
+---@return T
+singleton.acquire = function(world, component_type)
+    local instance = world[component_type]
+    if instance == nil then
+        instance = component_type()
+        local e = entity {instance}
+        instance.__singleton_entity = e
+        world:add(e)
+        world[component_type] = instance
+        return instance
     end
-    local instance = entity[component_type]
-    world[component_type] = instance
     return instance
 end
 
 ---@generic T: sia.component
 ---@param world sia.world
----@param entity sia.entity
 ---@param component_type T
 ---@return T?
-singleton.unregister = function(world, entity, component_type)
-    local instance = entity[component_type]
+singleton.remove = function(world, component_type)
+    local instance = world[component_type]
     if world[component_type] ~= instance then
         return nil
     end
     world[component_type] = nil
+    world:remove(instance.__singleton_entity)
     return instance
 end
 
