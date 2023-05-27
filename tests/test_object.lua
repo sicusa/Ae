@@ -13,9 +13,9 @@ ae_world.scheduler = ae_sched
 
 object.systems:register(ae_world, ae_sched);
 
--- test key
+-- test name
 
-print("== test key ==")
+print("== test name ==")
 
 local e1 = entity {
     object.name("test 1")

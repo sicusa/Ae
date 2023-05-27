@@ -1,29 +1,121 @@
+local ffi = require("ffi")
 local lume = require("lume")
+local vec2 = require("cpml.modules.vec2")
 
 local entity = require("sia.entity")
 local system = require("sia.system")
+local group = require("sia.group")
+local ffic = require("sia.ffic")
 
-local transform = require("ae.core.transform")
-local position = transform.position
+local singleton = require("ae.utils.singleton")
 
 local floor = math.floor
 local remove = lume.remove
+
+---@alias ae.vec2 {x: number, y: number}
+---@alias ae.vec3 {x: number, y: number, z: number}
 
 ---@class ae.space
 local space = {}
 
 -- components
 
----@class ae.space.map.props
----@field grid_scale? number
+ffi.cdef[[
+    struct ae_space_position {
+        float x, y;
+    };
+    struct ae_space_rotation {
+        float value;
+    };
+    struct ae_space_scale {
+        float x, y;
+    };
+]]
 
----@class ae.space.object_data
+---@class ae.space.position: ffi.ctype*
+---@field x number
+---@field y number
+---@field set sia.command (v: vec2)
+---@overload fun(x: number, y: number): ae.space.position
+space.position = ffic.struct("ae_space_position", {
+    set = function(self, v)
+        self.x = v.x
+        self.y = v.y
+    end
+})
+
+---@class ae.space.rotation: ffi.ctype*
+---@field value number
+---@field set sia.command (v: number)
+---@overload fun(v: number): ae.space.rotation
+space.rotation = ffic.struct("ae_space_rotation", {
+    set = function(self, v)
+        self.value = v
+    end
+})
+
+---@class ae.space.scale: ffi.ctype*
+---@field x number
+---@field y number
+---@field set sia.command (v: vec2)
+---@overload fun(x: number, y: number): ae.space.scale
+space.scale = ffic.struct("ae_space_scale", {
+    set = function(self, v)
+        self.x = v.x
+        self.y = v.y
+    end
+})
+
+---@class ae.space.node: sia.component
+---@field parent? sia.entity
+---@field applied_parent? sia.entity
+---@field children sia.group
+---@field dirty_children_nodes ae.space.node[]
+---@field local_transform love.Transform
+---@field world_transform love.Transform
+---@field status nil | 'dirty' | 'modified'
+---@field is_identity boolean
+---@field set_parent sia.command (parent: sia.entity)
+---@overload fun(parent?: sia.entity)
+space.node = entity.component(function(parent)
+    local instance = {
+        parent = parent,
+        children = group(),
+        dirty_children_nodes = {},
+        local_transform = love.math.newTransform(),
+        world_transform = love.math.newTransform(),
+        is_identity = true
+    }
+    return instance
+end)
+:on("set_parent", function(self, parent)
+    self.parent = parent
+end)
+
+---@class ae.space.node_data
+---@field dirty boolean
+
+---@class ae.space.node_library: sia.component
+---@field roots sia.group
+---@field dirty_root_nodes ae.space.node[]
+---@overload fun(): ae.space.node_library
+space.node_library = entity.component(function()
+    return {
+        roots = group(),
+        dirty_root_nodes = {}
+    }
+end)
+
+---@class ae.space.map_object_data
 ---@field grid ae.vec2
 ---@field position ae.vec2
 
+---@class ae.space.map.props
+---@field grid_scale? number
+
 ---@class ae.space.map: sia.component
 ---@field grid_scale number
----@field objects table<sia.entity, ae.space.object_data?>
+---@field objects table<sia.entity, ae.space.map_object_data?>
 ---@field [number] table<number, sia.entity?>
 ---@overload fun(props?: ae.space.map.props): ae.space.map
 space.map = entity.component(function(props)
@@ -84,9 +176,172 @@ end)
 
 -- systems
 
+local position = space.position
+local rotation = space.rotation
+local scale = space.scale
+local node = space.node
+local node_library = space.node_library
 local map = space.map
 local in_map = space.in_map
 local obstacle = space.obstacle
+
+local function clear_dirty_children_nodes(node)
+    local nodes = node.dirty_children_nodes
+    for i = 1, #nodes do
+        local child_node = nodes[i]
+        child_node.status = nil
+        clear_dirty_children_nodes(child_node)
+        nodes[i] = nil
+    end
+end
+
+local function tag_modified(lib, n)
+    if n.status == 'modified' then
+        return
+    end
+    n.status = 'modified';
+    clear_dirty_children_nodes(n)
+
+    local p_e = n.applied_parent
+    while p_e ~= nil do
+        local p = p_e[node]
+        local status = p.status
+        if status == 'dirty' then
+            return
+        end
+        p.status = 'dirty'
+
+        local dirty_children_nodes = p.dirty_children_nodes
+        dirty_children_nodes[#dirty_children_nodes+1] = n
+
+        n = p
+        p_e = n.applied_parent
+    end
+
+    local dirty_root_nodes = lib.dirty_root_nodes
+    dirty_root_nodes[#dirty_root_nodes+1] = n
+end
+
+local node_hierarchy_update_system = system {
+    name = "ae.space.node_hierarchy_update_system",
+    select = {node},
+    trigger = {"add", node.set_parent},
+
+    before_execute = function(world, sched)
+        return singleton.acquire(world, node_library)
+    end,
+    
+    execute = function(world, sched, e, lib)
+        local n = e[node]
+        local parent = n.parent
+        local applied_parent = n.applied_parent
+
+        if parent == applied_parent then
+            return
+        elseif applied_parent ~= nil then
+            applied_parent.children:remove(e)
+        end
+
+        local roots = lib.roots
+        if parent == nil then
+            roots:add(e)
+        else
+            roots:remove(e)
+            world:add(parent)
+            parent[node].children:add(e)
+        end
+
+        n.applied_parent = parent
+        tag_modified(lib, n)
+    end
+}
+
+local node_local_transforms_update_system = system {
+    name = "ae.space.node_local_transforms_update_system",
+    select = {node},
+    trigger = {"add", position.set, rotation.set, scale.set},
+    depend = {node_hierarchy_update_system},
+
+    before_execute = function(world, sched)
+        return singleton.acquire(world, node_library)
+    end,
+
+    execute = function(world, sched, e, lib)
+        local n = e[node]
+        local local_trans = n.local_transform
+
+        local px, py = 0, 0
+        local r = 0
+        local sx, sy = 1, 1
+
+        local c_p = e[position]
+        if c_p ~= nil then
+            px = c_p.x
+            py = c_p.y
+        end
+
+        local c_r = e[rotation]
+        if c_r ~= nil then
+            r = c_r.value
+        end
+
+        local c_s = e[scale]
+        if c_s ~= nil then
+            sx = c_s.x
+            sy = c_s.y
+        end
+
+        n.is_identity = false
+        local_trans:setTransformation(px, py, r, sx, sy)
+        tag_modified(lib, n)
+    end
+}
+
+local function update_modified_node(n, parent_world_trans)
+    local local_trans = n.local_transform
+    local world_trans = n.world_transform
+
+    world_trans:setMatrix(parent_world_trans:getMatrix())
+        :apply(local_trans)
+
+    local children = n.children
+    for i = 1, #children do
+        update_modified_node(children[i][node], world_trans)
+    end
+end
+
+local function update_dirty_node(node, parent_world_trans)
+    if node.status == 'modified' then
+        update_modified_node(node, parent_world_trans)
+        return
+    end
+
+    local world_trans = node.world_transform
+    local nodes = node.dirty_children_nodes
+
+    for i = 1, #nodes do
+        update_dirty_node(nodes[i], world_trans)
+        nodes[i] = nil
+    end
+end
+
+local DEFAULT_TRANSFORM = love.math.newTransform()
+
+local node_world_transforms_update_system = system {
+    name = "ae.space.node_world_transforms_update_system",
+    select = {node_library},
+    depend = {node_local_transforms_update_system},
+
+    execute = function(world, sched, e)
+        local lib = e[node_library]
+        local nodes = lib.dirty_root_nodes
+
+        for i = 1, #nodes do
+            update_dirty_node(nodes[i], DEFAULT_TRANSFORM)
+            nodes[i] = nil
+        end
+    end
+}
 
 local function add_object_in_map_grid(map, obj, grid_x, grid_y)
     local column = map[grid_x]
@@ -142,9 +397,9 @@ local function update_object_in_map(world, map_entity, e, p)
     end
 
     local data = m.objects[e]
-    local scale = m.grid_scale
-    local grid_x = floor(p.x / scale)
-    local grid_y = floor(p.y / scale)
+    local grid_scale = m.grid_scale
+    local grid_x = floor(p.x / grid_scale)
+    local grid_y = floor(p.y / grid_scale)
 
     if data == nil then
         if check_grid_occupied(m, grid_x, grid_y) then
@@ -233,8 +488,11 @@ space.systems = system {
     name = "ae.space.systems",
     authors = {"Phlamcenth Sicusa <sicusa@gilatod.art>"},
     version = {0, 0, 1},
-    depend = {transform.systems},
+    depend = {space.systems},
     children = {
+        node_hierarchy_update_system,
+        node_local_transforms_update_system,
+        node_world_transforms_update_system,
         in_map_object_place_system,
         in_map_object_uninitialize_system
     }
